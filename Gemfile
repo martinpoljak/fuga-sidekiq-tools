@@ -1,7 +1,7 @@
 source "http://rubygems.org"
 
 # runtime
-gem "sidekiq"
+gem "sidekiq", ">= 4.0.0"
 
 # development
 group :development do
