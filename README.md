@@ -1,42 +1,92 @@
-Gif Info
+Fuga Sidekiq Tools
 ========
 
-**gif-info** is analyzer of the [GIF image format][1]. It performs complete 
-analysis of internal GIF block structure and streams it as an "object 
-stream" with metainformations of each block. Also can *interpret* internal 
-structure by providing the simple object-like interface to base image 
-file informations. Works above all seekable IO streams, so allows 
-processing of the big files too. Doesn't perform [LZW][2] decompressing, 
-returns raw data for both color tables and images.
+**fuga-sidekiq-tools** implements two [Sidekiq][1] extensions per unnamed company (try to guess which one! finally someone who uses Ruby in Amsterdam in reasonable way) request:
 
-Two different approaches are available: **sequential** and **static**. 
-First one yields "stream" of objects which are equivalent to functional 
-blocks in the GIF file and which contain low-level GIF data. It's 
-equivalent of for example [SAX][3] parser although, of sure, less 
-complex. The other one provides classical single object-like access to 
-interpreted file informations. 
+* per exception type error handling,
+* simple callback for tracking job status changes.
 
-Examples of both are available in the `bin` directory. `git-info` 
-command writes out content of the static information object, `git-dump`
-dumps content of low level blocks stream.
+###  Error handling
 
-Modifiing the file and writing changes back is possible (see [StructFx][5]
-library documentation). It isn't implemented directly by this library,
-but should be easy to implement it if you will need it -- with exception
-of data blocks as comments or image data -- it's necessary split them 
-to blocks manually in your writing routine. Other structures provided
-by the library contains binary serialization routines implicitly.
+In Sidekiq, failed jobs policy can be defined only on job level, but sometime, you can need to distinguish them it on basis of different exception types. Here, it's implemented by two components:
 
-Copyright
----------
+* `Fuga::Sidekiq::Middleware::ErrorHandling` server middleware,
+* `Fuga::Sidekiq::ErrorHandling` worker mixin.
 
-Copyright &copy; 2011 &ndash; 2016 [Martin Poljak][7]. See `LICENSE.txt` for
-further details.
+*Mixin* provides simple API (well, class method) for definying policies, middleware ensures setting them before job is passed to subsequent middlewares, usually`RetryJobs` middleware ensuring retrying and dead queue handling. But it's usable generally for setting any job options on basis of exception type.
 
-[1]: http://www.matthewflickinger.com/lab/whatsinagif/
-[2]: https://en.wikipedia.org/wiki/LZW
-[3]: https://en.wikipedia.org/wiki/Simple_API_for_XML
-[4]: https://en.wikipedia.org/wiki/Document_Object_Model
-[5]: https://github.com/martinkozak/struct-fx
-[6]: https://github.com/martinkozak/gif-info/issues
-[7]: https://www.martinpoljak.net/
+Use it by the following way:
+
+```ruby
+require 'fuga/sidekiq/middleware/error-handling'
+require 'fuga/sidekiq/error-handling'
+require 'sidekiq'
+
+# install the middleware
+Sidekiq.configure_server do |config|
+    config.server_middleware do |chain|
+        chain.add Fuga::Sidekiq::Middleware::ErrorHandling
+    end
+end
+
+# define policies in worker
+class FooJob
+    include Sidekiq::Worker
+    include Fuga::Sidekiq::ErrorHandling
+    
+    # default options
+    sidekiq_options \
+        :retry => 2, :dead => true
+        
+    # specific policies
+    fuga_error FatalError,
+        :retry => 0, :dead => true
+    fuga_error SoftError,
+        :retry => 8, :dead => false
+
+    def perform
+        raise FatalError::new	 # will go to dead queue immediately
+    end 
+end
+```
+
+In case, other than declared exceptions are thrown, the normal default settings set by `sidekiq_options` are used. Note, to keep it simple (I really don't like complicated things), it doesn't analyze genericity, so in case, you need to deal with tree of exceptions, perhaps will be necessary to declare all of them.
+
+### Job status tracking
+
+To track job status is quite simple except tracking the initial `Queued` state because it's done directly by client and what is worse, Sidekiq uses lists for this task expcet something like Redis pubsub mechanism, therefore it's somehow difficult (despite I believe possible) to hack into this process.
+
+But to track other states like `Processed`, `Completed` and `Failed` can be tracked simply by:
+
+* `Fuga::Sidekiq::Middleware::JobStatus` server middleware.
+
+Configure and use it by the following way:
+
+```ruby
+require 'sidekiq'
+require 'fuga/sidekiq/middleware/job-status'
+
+Sidekiq.configure_server do |config|
+
+    # configure it
+    config.options[:fuga_job_status] = Proc::new do |worker, msg, status|
+         # in 'worker' is server instance of your job
+         # in 'msg' is your job specification (ID and so)
+         # in 'status' is just the status string
+    end
+    
+    # install middleware
+    config.server_middleware do |chain|
+        chain.add Fuga::Sidekiq::Middleware::JobStatus
+    end
+    
+end
+```
+
+
+### Copyright
+
+Copyright &copy; 2016 [Martin Poljak][2]. See `LICENSE.txt` for further details.
+
+[1]: http://sidekiq.org
+[2]: https://www.martinpoljak.net/
