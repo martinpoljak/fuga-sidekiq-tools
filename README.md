@@ -56,7 +56,7 @@ In case, other than declared exceptions are thrown, the normal default settings 
 
 To track job status is quite simple except tracking the initial `Queued` state because it's done directly by client and what is worse, Sidekiq uses lists for this task instead of something like Redis pubsub mechanism, therefore it's somehow difficult (despite I believe possible) to hack into this process.
 
-But to track other states like `Processed`, `Completed` and `Failed is rather simple by:
+But to track other states like `Processed`, `Completed` and `Failed` is rather simple by:
 
 * `Fuga::Sidekiq::Middleware::JobStatus` server middleware.
 
